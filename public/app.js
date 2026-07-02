@@ -22,18 +22,15 @@ form.addEventListener('submit', async (e) => {
       return;
     }
 
-    // IMPORTANT: This logs the raw API response so you can see its real shape.
-    // Open your browser console (F12 or right-click > Inspect > Console) to view it.
-    console.log('Raw API response:', data);
-
-    const products = extractProducts(data);
+    const products = data.products || [];
 
     if (products.length === 0) {
-      statusEl.textContent = `No results found for "${query}". Check the console — the API response shape might differ from what we expect.`;
+      statusEl.textContent = `No results found for "${query}".`;
       return;
     }
 
-    statusEl.textContent = `Found ${products.length} results for "${query}"`;
+    const storeCount = new Set(products.map(p => p.store)).size;
+    statusEl.textContent = `Found ${products.length} results for "${query}" across ${storeCount} store${storeCount > 1 ? 's' : ''}`;
     renderProducts(products);
     fetchRecommendation(query, products);
 
@@ -68,29 +65,13 @@ async function fetchRecommendation(query, products) {
   }
 }
 
-// Maps the Real-Time Amazon Data API's response shape into what our UI needs.
-// Its products live at data.data.products, each with fields like
-// product_title, product_price, product_photo, product_url, product_star_rating.
-function extractProducts(data) {
-  const rawList = data?.data?.products || [];
-
-  return rawList.map(item => ({
-    title: item.product_title || 'Unknown product',
-    image: item.product_photo || 'https://placehold.co/200x200?text=No+Image',
-    price: item.product_price || 'Price unavailable',
-    store: 'Amazon',
-    rating: item.product_star_rating || null,
-    link: item.product_url || '#'
-  })).filter(p => p.title !== 'Unknown product');
-}
-
 function renderProducts(products) {
   resultsEl.innerHTML = products.map(p => `
     <div class="product-card">
       <img src="${p.image}" alt="${escapeHtml(p.title)}" onerror="this.src='https://placehold.co/200x200?text=No+Image'">
       <h3>${escapeHtml(p.title)}</h3>
       <div class="price">${typeof p.price === 'number' ? '$' + p.price : p.price}</div>
-      <div class="store">${escapeHtml(p.store)}${p.rating ? ' · ⭐ ' + p.rating : ''}</div>
+      <div class="store store-${p.store.toLowerCase()}">${escapeHtml(p.store)}${p.rating ? ' · ⭐ ' + p.rating : ''}</div>
       <a href="${p.link}" target="_blank" rel="noopener noreferrer">View Deal</a>
     </div>
   `).join('');

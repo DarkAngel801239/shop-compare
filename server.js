@@ -10,9 +10,76 @@ app.use(express.static('public')); // serves index.html, style.css, app.js
 
 const PORT = process.env.PORT || 3000;
 const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY;
-const RAPIDAPI_HOST = 'real-time-amazon-data.p.rapidapi.com';
+const AMAZON_HOST = 'real-time-amazon-data.p.rapidapi.com';
+const EBAY_HOST = 'real-time-ebay-data.p.rapidapi.com';
+
+const AMAZON_AFFILIATE_TAG = process.env.AMAZON_AFFILIATE_TAG || '';
+
+// Turns one Amazon product object into our common shape.
+// If an affiliate tag is set, it's appended to the link so clicks earn commission.
+function normalizeAmazonProduct(item) {
+  let link = item.product_url || '#';
+  if (AMAZON_AFFILIATE_TAG && link !== '#') {
+    const separator = link.includes('?') ? '&' : '?';
+    link = `${link}${separator}tag=${AMAZON_AFFILIATE_TAG}`;
+  }
+
+  return {
+    title: item.product_title || 'Unknown product',
+    image: item.product_photo || 'https://placehold.co/200x200?text=No+Image',
+    price: item.product_price || 'Price unavailable',
+    store: 'Amazon',
+    rating: item.product_star_rating || null,
+    link
+  };
+}
+
+// Turns one eBay product object into our common shape.
+// eBay's field names are a best guess based on this provider's other APIs —
+// check the server logs after your first real search; if fields come back
+// as "Unknown product" or missing prices, adjust the fallbacks below to match.
+function normalizeEbayProduct(item) {
+  return {
+    title: item.product_title || item.title || item.item_title || 'Unknown product',
+    image: item.product_photo || item.image || item.thumbnail || 'https://placehold.co/200x200?text=No+Image',
+    price: item.product_price || item.price || item.current_price || 'Price unavailable',
+    store: 'eBay',
+    rating: item.product_rating || item.seller_rating || null,
+    link: item.product_url || item.item_url || item.link || '#'
+  };
+}
+
+async function fetchAmazon(query) {
+  const url = `https://${AMAZON_HOST}/search?query=${encodeURIComponent(query)}&page=1&country=US&sort_by=RELEVANCE`;
+  const response = await fetch(url, {
+    headers: { 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': AMAZON_HOST }
+  });
+  if (!response.ok) {
+    console.error('Amazon API error:', response.status, await response.text());
+    return [];
+  }
+  const data = await response.json();
+  const rawList = data?.data?.products || [];
+  return rawList.map(normalizeAmazonProduct);
+}
+
+async function fetchEbay(query) {
+  const url = `https://${EBAY_HOST}/search?query=${encodeURIComponent(query)}&country=US`;
+  const response = await fetch(url, {
+    headers: { 'X-RapidAPI-Key': RAPIDAPI_KEY, 'X-RapidAPI-Host': EBAY_HOST }
+  });
+  if (!response.ok) {
+    console.error('eBay API error:', response.status, await response.text());
+    return [];
+  }
+  const data = await response.json();
+  console.log('Raw eBay response (check field names here if products look wrong):', JSON.stringify(data).slice(0, 1000));
+  const rawList = data?.data?.products || data?.data || [];
+  return rawList.map(normalizeEbayProduct);
+}
 
 // This is the endpoint our frontend calls: /api/search?q=headphones
+// It queries Amazon and eBay in parallel and returns one merged list.
 app.get('/api/search', async (req, res) => {
   const query = req.query.q;
 
@@ -27,28 +94,22 @@ app.get('/api/search', async (req, res) => {
   }
 
   try {
-    const url = `https://${RAPIDAPI_HOST}/search?query=${encodeURIComponent(query)}&page=1&country=US&sort_by=RELEVANCE`;
+    // Promise.allSettled means if one store's API fails, we still return
+    // results from the other instead of failing the whole search.
+    const [amazonResult, ebayResult] = await Promise.allSettled([
+      fetchAmazon(query),
+      fetchEbay(query)
+    ]);
 
-    const apiResponse = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'X-RapidAPI-Key': RAPIDAPI_KEY,
-        'X-RapidAPI-Host': RAPIDAPI_HOST
-      }
-    });
+    const amazonProducts = amazonResult.status === 'fulfilled' ? amazonResult.value : [];
+    const ebayProducts = ebayResult.status === 'fulfilled' ? ebayResult.value : [];
 
-    if (!apiResponse.ok) {
-      const errText = await apiResponse.text();
-      console.error('RapidAPI error:', apiResponse.status, errText);
-      return res.status(apiResponse.status).json({ error: 'Product search API failed', details: errText });
-    }
+    if (amazonResult.status === 'rejected') console.error('Amazon fetch failed:', amazonResult.reason);
+    if (ebayResult.status === 'rejected') console.error('eBay fetch failed:', ebayResult.reason);
 
-    const data = await apiResponse.json();
+    const allProducts = [...amazonProducts, ...ebayProducts];
 
-    // We send the raw data back to the frontend for now.
-    // Once you see the real shape of this response (check your browser console),
-    // we can clean/simplify it here before sending it on.
-    res.json(data);
+    res.json({ products: allProducts });
 
   } catch (err) {
     console.error('Server error:', err);

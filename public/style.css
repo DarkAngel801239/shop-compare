@@ -27,6 +27,14 @@ header p {
   color: #b8b8d1;
 }
 
+.disclosure {
+  text-align: center;
+  font-size: 0.8rem;
+  color: #888;
+  padding: 8px 20px;
+  background: #f0f0f5;
+}
+
 main {
   max-width: 900px;
   margin: 0 auto;
@@ -136,7 +144,11 @@ button:hover {
   font-size: 0.85rem;
   color: #666;
   margin-bottom: 12px;
+  font-weight: 600;
 }
+
+.product-card .store.store-amazon { color: #e47911; }
+.product-card .store.store-ebay { color: #0064d2; }
 
 .product-card a {
   margin-top: auto;
